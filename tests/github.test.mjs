@@ -55,3 +55,7 @@ test('prepared publication retries the same commit when the branch does not exis
  });
  assert.equal(await gh.reconcilePublish(job),sha);assert.deepEqual(writes,[{ref:'refs/heads/kitchen/one',sha}]);
 });
+test('setup rejects a base that changed since the user reviewed its workflows',async()=>{
+ let writes=0;const gh=new mod.GitHub('t',async(url,o)=>{if(o.method!=='GET')writes++;return Response.json(new URL(url).pathname.endsWith('/main')?{object:{sha:'b'.repeat(40)}}:{default_branch:'main'});});
+ await assert.rejects(gh.setup('a/b',{baseBranch:'main',baseSha:'a'.repeat(40)}),/changed/);assert.equal(writes,0);
+});

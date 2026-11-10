@@ -56,7 +56,12 @@ export async function repositoryApi(user:string,parts:string[],method:string,bod
  }
  if(parts[0]==='repos'&&method==='GET')return (await github(user)).list(Number(parts[1]||1));
  if(parts[0]==='snapshot'&&method==='POST')return (await github(user)).snapshot(text(body.repository,'a repository',200));
- if(parts[0]==='setup'&&method==='POST')return (await github(user)).setup(text(body.repository,'a repository',200));
+ if(parts[0]==='setup'&&method==='POST'){
+  const gh=await github(user),name=text(body.repository,'a repository',200),snapshot=await gh.snapshot(name);
+  if(body.baseSha!==snapshot.baseSha)throw new KitchenError('The repository changed after workflow review. Reload it and review again.');
+  if(snapshot.otherWorkflows.length&&body.otherWorkflowsApproved!==true)throw new KitchenError('Review existing workflows before creating a setup branch and PR.');
+  return gh.setup(name,snapshot);
+ }
  if(parts[0]==='quote'&&method==='POST')return quote(user,body);
  if(parts[0]!=='runs'||!parts[1]||method!=='POST')throw new KitchenError('Repository route not found.',404);
  const id=parts[1],action=parts[2];

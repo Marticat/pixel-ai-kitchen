@@ -5,6 +5,7 @@ import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {WORKFLOW} from '../lib/kitchen-checks.mjs';
 test('the actual Actions preview script bundles a small Vite page into one HTML artifact',()=>{
+ mkdirSync(resolve('work'),{recursive:true});
  const root=mkdtempSync(resolve('work','preview-')),artifact=join(root,'artifact').replaceAll('\\','/'),output=join(root,'preview').replaceAll('\\','/');mkdirSync(artifact);
  writeFileSync(join(root,'package.json'),JSON.stringify({type:'module'}));
  writeFileSync(join(root,'index.html'),'<html><head><title>Preview test</title></head><body><div id="app"></div><script type="module" src="/main.js"></script></body></html>');

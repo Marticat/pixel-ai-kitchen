@@ -27,7 +27,7 @@ Repository support is limited to root-level React/Vite npm projects with `index.
 
 ### Connect a repository
 
-1. In **Connections**, save a fine-grained GitHub token restricted to selected repositories. The first release needs Contents, Actions, Pull requests and Workflows read/write permissions for setup and operation. Tokens are encrypted in the same per-owner vault as model keys and are never sent to a model.
+1. In **Connections**, save a fine-grained GitHub token restricted to selected repositories. The first release needs Contents, Pull requests and Workflows read/write permissions, plus Actions read access for setup and operation. Tokens are encrypted in the same per-owner vault as model keys and are never sent to a model.
 2. Open **Repository kitchen**, load repositories, select one and load files. Create the checks setup PR; review and merge it on GitHub, then reload files. The fixed workflow uses read-only job permissions, no persistent checkout credentials and no model keys.
 3. Review any other repository workflows. Branch publication and acceptance may trigger existing automation with its own permissions, secrets and costs. Such repositories require explicit acknowledgement before estimation. Kitchen does not claim to disable that automation.
 4. Select source files, describe the change, acceptance checks and constraints, and confirm the brief. Estimate, then generate or reuse a matching result.

@@ -94,6 +94,7 @@ export async function controlRun(user:string,id:string,action:string){
 }
 export async function stepRun(user:string,id:string){
  const keys=await getKeys(user);
+ const candidate=await loadRun(user,id);if(candidate?.repo&&await new GitHub(keys.github).head(candidate.repo.repository,candidate.repo.baseBranch)!==candidate.repo.baseSha)throw new KitchenError('The repository base changed. Cancel this order and estimate from the latest source.');
  return performStep(repository,id,user,async(args:{provider:Provider;model:string;system:string;prompt:string;maxOutput:number})=>{
   const req=prepareProviderRequest(args.provider,keys[args.provider],args.model,args.system,args.prompt,args.maxOutput);let response:Response;
   try{response=await fetch(req.url,{method:'POST',headers:req.headers as Record<string,string>,body:JSON.stringify(req.body),signal:AbortSignal.timeout(150000)});}catch{throw new KitchenError("The provider connection was interrupted. Cost is unknown; the request was not retried.");}
@@ -121,6 +122,7 @@ export async function quoteAction(user:string,id:string,value:Record<string,unkn
 export async function acceptAction(user:string,id:string,quoteId:unknown){
  const row=await database().prepare('SELECT * FROM kitchen_runs WHERE id=? AND owner=?').bind(id,user).first<{state:string;[key:string]:unknown}>();if(!row)throw new KitchenError("Order not found.");
  const current=decodeRow(row),run=applyAction(current,String(quoteId));
+ if(current.repo&&await new GitHub((await getKeys(user)).github).head(current.repo.repository,current.repo.baseBranch)!==current.repo.baseSha)throw new KitchenError('The repository base changed. Create a new order.');
  try{const result=await database().prepare("UPDATE kitchen_runs SET state=?,status='ready',paused=0,updated_at=? WHERE id=? AND owner=? AND state=? AND status=? AND lease IS NULL").bind(JSON.stringify(run),now(),id,user,row.state,current.status).run();if(result.meta.changes!==1)throw new KitchenError("The action was already confirmed or the order changed.");}catch(error){if(String(error).includes('UNIQUE'))throw new KitchenError("Finish or cancel the other active order first.");throw error;}
  return repository.load(id,user);
 }
