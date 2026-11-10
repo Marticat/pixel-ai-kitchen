@@ -1,6 +1,7 @@
 'use client';
 import {useState} from 'react';
 import type {Settings} from '@/lib/kitchen-types';
+import GitHubConnection from './GitHubConnection';
 export default function Connections({settings,loading,refresh,save}:{settings:Settings|null;loading:boolean;refresh:()=>void;save:(keys:{openai:string;anthropic:string})=>Promise<void>}){
  const [keys,setKeys]=useState({openai:'',anthropic:''}),[busy,setBusy]=useState(false);
  return <section className="live-settings" aria-label="Model connections">
@@ -42,6 +43,7 @@ export default function Connections({settings,loading,refresh,save}:{settings:Se
    {!settings?.vaultReady&&<p className="live-small">{loading?"Checking server settings…":"Key storage is currently unavailable."}</p>}
   </form>
   {Boolean(settings?.models.length)&&<details className="live-catalog"><summary>Available models: {settings!.models.length}</summary><p className="live-small">This catalog comes from the providers. Text models can be assigned tasks; specialized models are listed for reference only.</p><div>{settings!.models.map(m=><span key={m.provider+m.id}>{m.provider} / {m.name||m.id}</span>)}</div></details>}
+  <GitHubConnection/>
  </section>;
 }
 

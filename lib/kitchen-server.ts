@@ -6,11 +6,12 @@ import {performStep} from './kitchen-engine.mjs';
 import {assertPricingFresh,estimateOrder,parseBudget,rateFor,RATES,PRICING_DATE,PRICING_VERSION,ledger,reserveCost} from './kitchen-money.mjs';
 import {firstWorker,planAction,applyAction,buildTaskInput} from './kitchen-workflow.mjs';
 import type {PriceRate} from './kitchen-types';
+import {GitHub} from './kitchen-github.mjs';
 
 type Secrets={OPENAI_API_KEY?:string;ANTHROPIC_API_KEY?:string;KITCHEN_VAULT_KEY?:string;DB?:D1Database};
-type Keys={openai?:string;anthropic?:string};
+type Keys={openai?:string;anthropic?:string;github?:string};
 const runtime=()=>env as unknown as Secrets;
-const database=()=>{const db=runtime().DB;if(!db)throw new KitchenError("Order storage is not configured yet.");return db;};
+export const database=()=>{const db=runtime().DB;if(!db)throw new KitchenError("Order storage is not configured yet.");return db;};
 const now=()=>new Date().toISOString();
 export function identity(request:Request){
  const user=request.headers.get('oai-authenticated-user-id');if(!user)throw new KitchenError("Sign in with ChatGPT to open your kitchen.",401);
@@ -20,12 +21,12 @@ export function identity(request:Request){
 function b64(bytes:Uint8Array){return btoa(String.fromCharCode(...bytes));}
 function unb64(text:string){return Uint8Array.from(atob(text),c=>c.charCodeAt(0));}
 async function vaultKey(){const secret=runtime().KITCHEN_VAULT_KEY;if(!secret)throw new KitchenError("Secure key storage is not configured yet.");const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(secret));return crypto.subtle.importKey('raw',digest,{name:'AES-GCM'},false,['encrypt','decrypt']);}
-async function getKeys(user:string):Promise<Keys>{
+export async function getKeys(user:string):Promise<Keys>{
  const base:Keys={openai:runtime().OPENAI_API_KEY,anthropic:runtime().ANTHROPIC_API_KEY};
  const row=await database().prepare('SELECT ciphertext,iv FROM kitchen_keys WHERE owner=?').bind(user).first<{ciphertext:string;iv:string}>();if(!row)return base;
  try{const clear=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(row.iv),additionalData:new TextEncoder().encode(user)},await vaultKey(),unb64(row.ciphertext));return {...base,...JSON.parse(new TextDecoder().decode(clear))};}catch{throw new KitchenError("Could not decrypt the saved keys. Update the connection in settings.");}
 }
-async function saveKeys(user:string,keys:Keys){const iv=crypto.getRandomValues(new Uint8Array(12));const ciphertext=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:new TextEncoder().encode(user)},await vaultKey(),new TextEncoder().encode(JSON.stringify(keys)));await database().prepare('INSERT INTO kitchen_keys(owner,ciphertext,iv,updated_at) VALUES(?,?,?,?) ON CONFLICT(owner) DO UPDATE SET ciphertext=excluded.ciphertext,iv=excluded.iv,updated_at=excluded.updated_at').bind(user,b64(new Uint8Array(ciphertext)),b64(iv),now()).run();}
+export async function saveKeys(user:string,keys:Keys){const iv=crypto.getRandomValues(new Uint8Array(12));const ciphertext=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:new TextEncoder().encode(user)},await vaultKey(),new TextEncoder().encode(JSON.stringify(keys)));await database().prepare('INSERT INTO kitchen_keys(owner,ciphertext,iv,updated_at) VALUES(?,?,?,?) ON CONFLICT(owner) DO UPDATE SET ciphertext=excluded.ciphertext,iv=excluded.iv,updated_at=excluded.updated_at').bind(user,b64(new Uint8Array(ciphertext)),b64(iv),now()).run();}
 function providerError(provider:Provider,status:number){const name=provider==='openai'?'OpenAI':'Anthropic';return status===401||status===403?`${name}: key rejected or model access unavailable.`:status===429?`${name}: quota or balance exhausted. No automatic retry was made.`:`${name}: service error (${status}). No automatic retry was made.`;}
 async function providerModels(provider:Provider,key:string):Promise<Model[]>{
  const models:Model[]=[];let after='';
@@ -69,6 +70,7 @@ export async function createRun(user:string,value:Record<string,unknown>){
 export async function startRun(user:string,id:string){
  const run=await repository.load(id,user);if(!run||run.status!=='draft')throw new KitchenError("This estimate has already started or is unavailable.");
  assertPricingFresh(run.pricingDate);if(!run.quoteExpiresAt||Date.now()>run.quoteExpiresAt||run.pricingVersion!==PRICING_VERSION)throw new KitchenError("Estimate expired. Calculate it again before starting.");
+ if(run.repo){const gh=new GitHub((await getKeys(user)).github);if(await gh.head(run.repo.repository,run.repo.baseBranch)!==run.repo.baseSha)throw new KitchenError('The repository changed after estimation. Create a new estimate.');}
  if(!Number.isSafeInteger(run.budgetMicros)||!run.budgetMicros)throw new KitchenError("This estimate has no budget.");
  const settings=await getSettings(user);if(!settings.openai||!settings.anthropic||Object.keys(settings.errors).length)throw new KitchenError("Connect and verify both providers to start. The estimate was calculated for free.");
  if([run.tasks[0],...run.catalogue.map(m=>({provider:m.provider,model:m.id}))].some(m=>!settings.models.some(a=>a.provider===m.provider&&a.id===m.model)))throw new KitchenError("Available models have changed. Calculate a new estimate.");
