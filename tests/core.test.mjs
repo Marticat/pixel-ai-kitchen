@@ -40,3 +40,8 @@ const a=readProviderResult('anthropic',{model:'claude-haiku-5-5',stop_reason:'en
 assert.equal(a.complete,true);assert.equal(a.text,'answer');
 assert.equal(readProviderResult('openai',{status:'completed',output:[],usage:{input_tokens:5,output_tokens:1}}).complete,false);
 });
+test('missing, negative or unexpected cache categories cannot be billed as zero',()=>{
+ for(const provider of ['openai','anthropic']){const r=readProviderResult(provider,{usage:{input_tokens:10,output_tokens:2},output:[],content:[]});assert.equal(r.usage.billingComplete,false);}
+ const a=readProviderResult('anthropic',{usage:{input_tokens:10,output_tokens:2,cache_read_input_tokens:-1,cache_creation_input_tokens:0},content:[]});assert.equal(a.usage.billingComplete,false);
+ const b=readProviderResult('anthropic',{usage:{input_tokens:10,output_tokens:2,cache_read_input_tokens:0,cache_creation_input_tokens:100,cache_creation:{ephemeral_1h_input_tokens:100}},content:[]});assert.equal(b.usage.billingComplete,false);
+});
