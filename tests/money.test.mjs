@@ -30,9 +30,9 @@ test('long context tiers and fractional cheap tokens are never rounded down',()=
  assert.equal(priceUsage(rate,{input:100001,output:0,cacheRead:0,cacheWrite:0}).total,50001);
  assert.equal(priceUsage(rate,{input:1,output:0,cacheRead:0,cacheWrite:0}).total,1);
 });
-test('draft estimate has a chef, 2–5-worker range, no unknown prices',()=>{
+test('draft estimate has a chef, optional workers and no unknown prices',()=>{
  const selected={chief:{provider:'openai',id:'gpt-6.1-sol'},workers:[{provider:'anthropic',id:'claude-haiku-5-5'}]};
- const e=estimateOrder('Сделай магазин',2048,selected);
+ const e=estimateOrder("Build a store",2048,selected);
  assert.equal(e.rows.length,2);assert.ok(e.lowMicros>0&&e.highMicros>=e.lowMicros);assert.equal(e.version,PRICING_VERSION);
  assert.throws(()=>estimateOrder('x',2048,{...selected,chief:{provider:'openai',id:'unknown'}}));
 });

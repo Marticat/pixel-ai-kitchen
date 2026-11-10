@@ -15,7 +15,7 @@ test('Chef direct result completes one payable request',async()=>{
 
 function fixture(){
 let locked=false;
-const run={id:'run',owner:'user',status:'ready',paused:false,maxOutput:2048,mode:'balance',prompt:'Подготовь проект',catalogue:[{provider:'openai',id:'gpt-6-luna'},{provider:'anthropic',id:'claude-haiku-5-5'}],tasks:[{id:'chef',role:'Шеф',task:'Составить план',provider:'openai',model:'gpt-6-luna',dependsOn:[],status:'queued',output:'',usage:null}]};
+const run={id:'run',owner:'user',status:'ready',paused:false,maxOutput:2048,mode:'balance',prompt:"Prepare a project",catalogue:[{provider:'openai',id:'gpt-6-luna'},{provider:'anthropic',id:'claude-haiku-5-5'}],tasks:[{id:'chef',role:"Head chef",task:"Create a plan",provider:'openai',model:'gpt-6-luna',dependsOn:[],status:'queued',output:'',usage:null}]};
 run.budgetMicros=1000000;run.pricingDate=PRICING_DATE;run.pricingVersion=PRICING_VERSION;run.rates=Object.fromEntries(run.catalogue.map(m=>[m.provider+'/'+m.id,rateFor(m.provider,m.id)]));
 const store={load:async(id,user)=>id===run.id&&user===run.owner?structuredClone(run):null,acquire:async(id,user)=>{if(id!==run.id||user!==run.owner||locked||run.paused||run.status!=='ready')return null;locked=true;run.status='running';return 'lease';},save:async(id,user,lease,value,release)=>{assert.equal(lease,'lease');Object.assign(run,structuredClone(value));if(release)locked=false;return true;}};
 return {run,store};
@@ -23,10 +23,10 @@ return {run,store};
 test('A simultaneous step cannot issue a duplicate payable request',async()=>{
 const {store,run}=fixture();let calls=0,release;
 const wait=new Promise(r=>release=r);
-const invoke=async()=>{calls++;await wait;return {text:JSON.stringify({title:'План',tasks:[{id:'write',role:'Автор',task:'Подготовить ответ',provider:'anthropic',model:'claude-haiku-5-5',dependsOn:[]}]}),complete:true,model:'gpt-6-luna',usage:{input:10,output:20,total:30}};};
+const invoke=async()=>{calls++;await wait;return {text:JSON.stringify({title:"Plan",tasks:[{id:'write',role:"Writer",task:"Prepare a response",provider:'anthropic',model:'claude-haiku-5-5',dependsOn:[]}]}),complete:true,model:'gpt-6-luna',usage:{input:10,output:20,total:30}};};
 const first=performStep(store,'run','user',invoke);
 await new Promise(r=>setImmediate(r));
-await assert.rejects(performStep(store,'run','user',invoke),/выполняется|недоступен/);release();await first;assert.equal(calls,1);assert.equal(run.tasks.length,2);assert.equal(run.tasks[0].usage.total,30);
+await assert.rejects(performStep(store,'run','user',invoke),/running|unavailable/);release();await first;assert.equal(calls,1);assert.equal(run.tasks.length,2);assert.equal(run.tasks[0].usage.total,30);
 });
 test('Malformed plan preserves real planning usage and stops without workers',async()=>{
 const {store,run}=fixture();await performStep(store,'run','user',async()=>({text:'not json',complete:true,model:'gpt-6-luna',usage:{input:3,output:4,total:7}}));
@@ -41,14 +41,14 @@ test('A delayed lock acquisition uses fresh state and never repeats the chef',as
  assert.deepEqual(calls,['gpt-6-luna','claude-haiku-5-5']);assert.equal(run.tasks[0].usage.total,30);assert.equal(run.tasks[1].usage.total,11);assert.equal(run.status,'completed');
 });
 test('Failed request is not retried and usage is explicitly unknown',async()=>{
-const {store,run}=fixture();let calls=0;await performStep(store,'run','user',async()=>{calls++;throw new Error('Провайдер недоступен.');});
+const {store,run}=fixture();let calls=0;await performStep(store,'run','user',async()=>{calls++;throw new Error("Provider unavailable.");});
 assert.equal(run.status,'error');assert.equal(run.tasks[0].usage,null);assert.equal(run.tasks[0].status,'error');
-await assert.rejects(performStep(store,'run','user',async()=>{calls++;}),/выполняется|недоступен/);assert.equal(calls,1);
+await assert.rejects(performStep(store,'run','user',async()=>{calls++;}),/running|unavailable/);assert.equal(calls,1);
 });
 test('Ownership and pause are checked before calling a provider',async()=>{
 const {store,run}=fixture();let calls=0;const invoke=async()=>{calls++;};
-await assert.rejects(performStep(store,'run','someone-else',invoke),/найден/);
-run.paused=true;await assert.rejects(performStep(store,'run','user',invoke),/пауз/);assert.equal(calls,0);
+await assert.rejects(performStep(store,'run','someone-else',invoke),/not found/);
+run.paused=true;await assert.rejects(performStep(store,'run','user',invoke),/paused/);assert.equal(calls,0);
 });
 test('Truncated output remains visible and stops dependent tasks',async()=>{
 const {store,run}=fixture();await performStep(store,'run','user',async()=>({text:'partial',complete:false,model:'gpt-6-luna',usage:{input:2,output:100,total:102},stopReason:'max_output_tokens'}));
@@ -57,7 +57,7 @@ assert.equal(run.tasks[0].output,'partial');assert.equal(run.tasks[0].status,'in
 test('insufficient budget stops before generation and leaves the task queued',async()=>{
  const {store,run}=fixture();run.budgetMicros=1;let calls=0;
  await performStep(store,'run','user',async()=>{calls++;});
- assert.equal(calls,0);assert.equal(run.status,'budget');assert.equal(run.tasks[0].status,'queued');assert.equal(ledger(run).spent,0);assert.match(run.budgetStop,/бюджет/i);
+ assert.equal(calls,0);assert.equal(run.status,'budget');assert.equal(run.tasks[0].status,'queued');assert.equal(ledger(run).spent,0);assert.match(run.budgetStop,/budget/i);
 });
 test('a legacy run without a budget cannot bypass protection',async()=>{
  const {store,run}=fixture();delete run.budgetMicros;let calls=0;
@@ -92,7 +92,7 @@ test('pause at the atomic reservation gate prevents generation and releases lock
 });
 test('Direct worker performs no planning and finishes with one response',async()=>{
  const {store,run}=fixture();run.tasks[0].kind='work';run.tasks[0].task='Write a button';let calls=0;
- await performStep(store,'run','user',async args=>{calls++;assert.match(args.prompt,/Write a button/);assert.doesNotMatch(args.prompt,/JSON-план/);return {text:'button',complete:true,usage:{input:10,output:20,total:30}};});
+ await performStep(store,'run','user',async args=>{calls++;assert.match(args.prompt,/Write a button/);assert.doesNotMatch(args.prompt,/JSON plan/);return {text:'button',complete:true,usage:{input:10,output:20,total:30}};});
  assert.equal(calls,1);assert.equal(run.tasks.length,1);assert.equal(run.status,'completed');
 });
 test('A paid review preserves the target output and records a failed verdict',async()=>{
@@ -108,7 +108,7 @@ test('A revision only invokes the selected task and spends against its approved 
 });
 test('A repaired task can complete despite a failed review of an older version',async()=>{
  const {store,run}=fixture();Object.assign(run.tasks[0],{kind:'work',revision:1,status:'queued',output:''});
- run.tasks.push({id:'old-review',kind:'review',targetId:'chef',targetRevision:0,status:'error',output:'bad JSON',error:'Некорректный вердикт',cost:{state:'settled',micros:10}});
+ run.tasks.push({id:'old-review',kind:'review',targetId:'chef',targetRevision:0,status:'error',output:'bad JSON',error:"Invalid verdict",cost:{state:'settled',micros:10}});
  await performStep(store,'run','user',async()=>({text:'fixed',complete:true,usage:{input:10,output:20,total:30}}));
- assert.equal(run.status,'completed');assert.ok(ledger(run).spent>10);assert.equal(run.tasks[1].error,'Некорректный вердикт');
+ assert.equal(run.status,'completed');assert.ok(ledger(run).spent>10);assert.equal(run.tasks[1].error,"Invalid verdict");
 });

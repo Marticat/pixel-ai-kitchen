@@ -15,22 +15,22 @@ assert.equal(normalizeUsage('openai',{input_tokens:-1,output_tokens:1}),null);
 });
 const catalogue=[{provider:'openai',id:'gpt-6-astra'},{provider:'openai',id:'gpt-6-luna'},{provider:'anthropic',id:'claude-sonnet-5-5'},{provider:'anthropic',id:'claude-haiku-5-5'}];
 test('A small request may be answered by the chef without spawning workers',()=>{
- const plan=validatePlan({title:'Кнопка',result:'button code',tasks:[]},catalogue);
+ const plan=validatePlan({title:"Button",result:'button code',tasks:[]},catalogue);
  assert.equal(plan.result,'button code');assert.deepEqual(plan.tasks,[]);
  assert.throws(()=>validatePlan({title:'X',result:'',tasks:[]},catalogue));
 });
 test('Routing chooses available models only, with economy and quality preferences',()=>{
 assert.equal(chooseModels(catalogue,'economy').workers.find(x=>x.provider==='openai').id,'gpt-6-luna');
 assert.equal(chooseModels(catalogue,'quality').chief.id,'gpt-6-astra');
-assert.throws(()=>chooseModels([{provider:'openai',id:'gpt-image-2'}],'balance'),/модел/);
+assert.throws(()=>chooseModels([{provider:'openai',id:'gpt-image-2'}],'balance'),/model/);
 });
-const good={title:'Магазин',tasks:[{id:'ui',role:'Интерфейс',task:'Подготовить каталог товаров',provider:'openai',model:'gpt-6-luna',dependsOn:[]},{id:'review',role:'Проверка',task:'Проверить и собрать результаты',provider:'anthropic',model:'claude-sonnet-5-5',dependsOn:['ui']}]};
+const good={title:"Store",tasks:[{id:'ui',role:"Interface",task:"Prepare a product catalog",provider:'openai',model:'gpt-6-luna',dependsOn:[]},{id:'review',role:"Review",task:"Review and combine the results",provider:'anthropic',model:'claude-sonnet-5-5',dependsOn:['ui']}]};
 test('Validates trusted provider/model choices and dependency order',()=>{
 const plan=validatePlan(good,catalogue);assert.equal(plan.tasks.length,2);
-assert.throws(()=>validatePlan({...good,tasks:[{...good.tasks[0],model:'made-up'}]},catalogue),/модел/);
-assert.throws(()=>validatePlan({...good,tasks:[{...good.tasks[0],dependsOn:['ui']},good.tasks[1]]},catalogue),/зависим/);
-assert.throws(()=>validatePlan({...good,tasks:[{...good.tasks[0],id:'review'},good.tasks[1]]},catalogue),/идентификатор/);
-assert.throws(()=>validatePlan({...good,tasks:Array(7).fill(good.tasks[0])},catalogue),/задач/);
+assert.throws(()=>validatePlan({...good,tasks:[{...good.tasks[0],model:'made-up'}]},catalogue),/model/);
+assert.throws(()=>validatePlan({...good,tasks:[{...good.tasks[0],dependsOn:['ui']},good.tasks[1]]},catalogue),/dependenc/);
+assert.throws(()=>validatePlan({...good,tasks:[{...good.tasks[0],id:'review'},good.tasks[1]]},catalogue),/identifier/);
+assert.throws(()=>validatePlan({...good,tasks:Array(7).fill(good.tasks[0])},catalogue),/task/);
 });
 test('Provider request binds auth, model and limit to fixed first-party endpoints',()=>{
 const a=prepareProviderRequest('openai','secret','gpt-6-luna','system','hello',2048);
