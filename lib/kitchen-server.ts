@@ -2,7 +2,8 @@ import {env} from 'cloudflare:workers';
 import type {Model,Provider,Run} from './kitchen-types';
 import {chooseModels,prepareProviderRequest,readProviderResult,textModel} from './kitchen-core.mjs';
 import {performStep} from './kitchen-engine.mjs';
-import {assertPricingFresh,estimateOrder,parseBudget,rateFor,RATES,PRICING_DATE,PRICING_VERSION,ledger} from './kitchen-money.mjs';
+import {assertPricingFresh,estimateOrder,parseBudget,rateFor,RATES,PRICING_DATE,PRICING_VERSION,ledger,reserveCost} from './kitchen-money.mjs';
+import {firstWorker,planAction,applyAction,buildTaskInput} from './kitchen-workflow.mjs';
 import type {PriceRate} from './kitchen-types';
 
 type Secrets={OPENAI_API_KEY?:string;ANTHROPIC_API_KEY?:string;KITCHEN_VAULT_KEY?:string;DB?:D1Database};
@@ -57,9 +58,11 @@ export async function createRun(user:string,value:Record<string,unknown>){
  const budgetMicros=parseBudget(value.budgetUsd);assertPricingFresh();
  const settings=await getSettings(user);const availabilityVerified=Boolean(settings.openai&&settings.anthropic&&!Object.keys(settings.errors).length);
  const catalogue=availabilityVerified?settings.models.filter(m=>rateFor(m.provider,m.id)):RATES.map(r=>({provider:r.provider,id:r.id}));
- const selected=chooseModels(catalogue,mode),estimate=estimateOrder(value.prompt.trim(),maxOutput,selected);
- const rates=Object.fromEntries([selected.chief,...selected.workers].map(m=>[m.provider+'/'+m.id,rateFor(m.provider,m.id)])) as Record<string,PriceRate>;
- const run:Run={id:crypto.randomUUID(),owner:user,title:'Новый проект',prompt:value.prompt.trim(),mode,maxOutput,status:'draft',paused:false,createdAt:now(),catalogue:selected.workers as Model[],budgetMicros,pricingDate:PRICING_DATE,pricingVersion:PRICING_VERSION,rates,estimate,quoteExpiresAt:Date.now()+15*60000,availabilityVerified,tasks:[{id:'chef',role:'Шеф',task:'Разобрать запрос и распределить работу между моделями.',provider:selected.chief.provider,model:selected.chief.id,dependsOn:[],status:'queued',output:'',usage:null}]};
+ const workMode=value.workMode===undefined?'auto':value.workMode;if(workMode!=='auto'&&workMode!=='single')throw new Error('Выберите состав команды.');
+ const selected=chooseModels(catalogue,mode);if(workMode==='single')selected.chief=firstWorker(catalogue,mode);
+ const estimate=estimateOrder(value.prompt.trim(),maxOutput,selected,workMode==='single');
+ const rates=Object.fromEntries(catalogue.map(m=>[m.provider+'/'+m.id,rateFor(m.provider,m.id)])) as Record<string,PriceRate>;
+ const run:Run={id:crypto.randomUUID(),owner:user,title:workMode==='single'?value.prompt.trim().slice(0,70):'Новый проект',prompt:value.prompt.trim(),mode,workMode,maxOutput,status:'draft',paused:false,createdAt:now(),catalogue:catalogue as Model[],budgetMicros,pricingDate:PRICING_DATE,pricingVersion:PRICING_VERSION,rates,estimate,quoteExpiresAt:Date.now()+15*60000,availabilityVerified,tasks:[{id:'chef',role:workMode==='single'?'Мастер':'Шеф',...(workMode==='single'?{kind:'work' as const}:{}),task:workMode==='single'?value.prompt.trim():'Разобрать запрос: решить самому или назначить необходимую команду.',provider:selected.chief.provider,model:selected.chief.id,dependsOn:[],status:'queued',output:'',usage:null}]};
  await database().prepare('INSERT INTO kitchen_runs(id,owner,title,status,paused,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').bind(run.id,user,run.title,run.status,0,JSON.stringify(run),run.createdAt,now()).run();return run;
 }
 export async function startRun(user:string,id:string){
@@ -74,11 +77,11 @@ export async function startRun(user:string,id:string){
 }
 export async function updateBudget(user:string,id:string,value:unknown){
  const budgetMicros=parseBudget(value),row=await database().prepare('SELECT * FROM kitchen_runs WHERE id=? AND owner=?').bind(id,user).first<{state:string;[key:string]:unknown}>(),run=row?decodeRow(row):null;
- if(!run||!['ready','budget'].includes(run.status)||run.leaseUntil||run.uncertain)throw new Error('Бюджет можно изменить только у остановленного заказа.');
+ if(!run||!['ready','budget','completed','error'].includes(run.status)||run.leaseUntil||run.uncertain)throw new Error('Бюджет можно изменить только у остановленного заказа.');
  if(!run.pricingDate||!run.rates)throw new Error('Для старого заказа сначала создайте новую смету.');assertPricingFresh(run.pricingDate);
  const funds=ledger(run);if(funds.unknown||funds.reserved)throw new Error('Сначала проверьте неизвестный расход у провайдера.');if(budgetMicros<funds.spent)throw new Error('Бюджет не может быть меньше уже потраченной суммы.');
- const previous=run.status;run.budgetMicros=budgetMicros;run.budgetStop=null;run.status='ready';
- try{const result=await database().prepare("UPDATE kitchen_runs SET state=?,status='ready',updated_at=? WHERE id=? AND owner=? AND lease IS NULL AND status=? AND state=?").bind(JSON.stringify(run),now(),id,user,previous,row!.state).run();if(result.meta.changes!==1)throw new Error('Заказ уже изменился. Обновите его состояние.');}catch(error){if(String(error).includes('UNIQUE'))throw new Error('Сначала завершите или отмените другой активный заказ.');throw error;}
+ const previous=run.status;run.budgetMicros=budgetMicros;run.budgetStop=null;run.status=previous==='budget'?'ready':previous;delete run.actionQuote;
+ try{const result=await database().prepare("UPDATE kitchen_runs SET state=?,status=?,updated_at=? WHERE id=? AND owner=? AND lease IS NULL AND status=? AND state=?").bind(JSON.stringify(run),run.status,now(),id,user,previous,row!.state).run();if(result.meta.changes!==1)throw new Error('Заказ уже изменился. Обновите его состояние.');}catch(error){if(String(error).includes('UNIQUE'))throw new Error('Сначала завершите или отмените другой активный заказ.');throw error;}
  return repository.load(id,user);
 }
 export async function controlRun(user:string,id:string,action:string){
@@ -92,14 +95,31 @@ export async function stepRun(user:string,id:string){
   const req=prepareProviderRequest(args.provider,keys[args.provider],args.model,args.system,args.prompt,args.maxOutput);let response:Response;
   try{response=await fetch(req.url,{method:'POST',headers:req.headers as Record<string,string>,body:JSON.stringify(req.body),signal:AbortSignal.timeout(150000)});}catch{throw new Error('Соединение с провайдером прервано. Расход неизвестен; запрос не повторён.');}
   if(!response.ok)throw new Error(providerError(args.provider,response.status));let value;try{value=await response.json();}catch{throw new Error('Провайдер вернул нечитаемый ответ. Расход неизвестен; повтор отключён.');}return readProviderResult(args.provider,value);
- },async(args:{provider:Provider;model:string;system:string;prompt:string;maxOutput:number})=>{
+ },(args:{provider:Provider;model:string;system:string;prompt:string;maxOutput:number})=>countInput(keys,args));
+}
+async function countInput(keys:Keys,args:{provider:Provider;model:string;system:string;prompt:string;maxOutput:number}){
   const req=prepareProviderRequest(args.provider,keys[args.provider],args.model,args.system,args.prompt,args.maxOutput);
   const url=args.provider==='openai'?'https://api.openai.com/v1/responses/input_tokens':'https://api.anthropic.com/v1/messages/count_tokens';
   const body=args.provider==='openai'?{model:args.model,instructions:args.system,input:args.prompt}:{model:args.model,system:args.system,messages:[{role:'user',content:args.prompt}]};
   let response;try{response=await fetch(url,{method:'POST',headers:req.headers,body:JSON.stringify(body),signal:AbortSignal.timeout(20000)});}catch{throw new Error('Подсчёт токенов недоступен. Платный запрос не отправлен.');}
   if(!response.ok)throw new Error('Не удалось посчитать входящие токены. Платный запрос не отправлен.');
   const value=await response.json() as {input_tokens?:number};if(!Number.isSafeInteger(value.input_tokens)||value.input_tokens!<0)throw new Error('Провайдер не вернул число входящих токенов.');return value.input_tokens!;
- });
+}
+export async function quoteAction(user:string,id:string,value:Record<string,unknown>){
+ const row=await database().prepare('SELECT * FROM kitchen_runs WHERE id=? AND owner=?').bind(id,user).first<{state:string;[key:string]:unknown}>();if(!row)throw new Error('Заказ не найден.');
+ if(value.feedback!==undefined&&typeof value.feedback!=='string')throw new Error('Опиши исправление текстом.');
+ const run=decodeRow(row),q=planAction(run,String(value.taskId),String(value.action),(value.feedback as string)||'');
+ // The client never supplies prompts, model IDs, prices or a reservation amount.
+ const input=buildTaskInput(run,q.task),tokens=await countInput(await getKeys(user),input),reserve=reserveCost(run.rates![q.task.provider+'/'+q.task.model],tokens,input.maxOutput);
+ run.actionQuote={...q,id:crypto.randomUUID(),input,reserveMicros:reserve.micros,expiresAt:Date.now()+5*60000};
+ const result=await database().prepare("UPDATE kitchen_runs SET state=?,updated_at=? WHERE id=? AND owner=? AND state=? AND status=? AND paused=? AND lease IS NULL").bind(JSON.stringify(run),now(),id,user,row.state,run.status,run.paused?1:0).run();
+ if(result.meta.changes!==1)throw new Error('Заказ изменился во время расчёта. Обнови его и повтори расчёт.');return repository.load(id,user);
+}
+export async function acceptAction(user:string,id:string,quoteId:unknown){
+ const row=await database().prepare('SELECT * FROM kitchen_runs WHERE id=? AND owner=?').bind(id,user).first<{state:string;[key:string]:unknown}>();if(!row)throw new Error('Заказ не найден.');
+ const current=decodeRow(row),run=applyAction(current,String(quoteId));
+ try{const result=await database().prepare("UPDATE kitchen_runs SET state=?,status='ready',paused=0,updated_at=? WHERE id=? AND owner=? AND state=? AND status=? AND lease IS NULL").bind(JSON.stringify(run),now(),id,user,row.state,current.status).run();if(result.meta.changes!==1)throw new Error('Действие уже подтверждено или заказ изменился.');}catch(error){if(String(error).includes('UNIQUE'))throw new Error('Сначала заверши или отмени другой активный заказ.');throw error;}
+ return repository.load(id,user);
 }
 export {textModel};
 

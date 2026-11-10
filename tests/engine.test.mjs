@@ -2,7 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {performStep as guardedStep} from '../lib/kitchen-engine.mjs';
 import {rateFor,PRICING_DATE,PRICING_VERSION,ledger,reserveCost} from '../lib/kitchen-money.mjs';
+import {planAction,applyAction,buildTaskInput} from '../lib/kitchen-workflow.mjs';
 const performStep=(...args)=>guardedStep(...args,async()=>100);
+test('Receipt retains previous paid attempts and unknown reservations',()=>{
+ const funds=ledger({budgetMicros:1000,tasks:[{cost:{state:'settled',micros:30},attempts:[{cost:{state:'settled',micros:20}},{cost:{state:'unknown',reservedMicros:100}}]}]});
+ assert.deepEqual(funds,{spent:50,reserved:100,unknown:true,remaining:850});
+});
+test('Chef direct result completes one payable request',async()=>{
+ const {store,run}=fixture();await performStep(store,'run','user',async()=>({text:JSON.stringify({title:'Button',result:'button code',tasks:[]}),complete:true,usage:{input:10,output:20,total:30}}));
+ assert.equal(run.status,'completed');assert.equal(run.tasks.length,1);assert.equal(run.tasks[0].output,'button code');
+});
 
 function fixture(){
 let locked=false;
@@ -80,4 +89,26 @@ test('pause at the atomic reservation gate prevents generation and releases lock
  const {store,run}=fixture(),save=store.save;let calls=0;
  store.save=async(id,user,lease,value,release)=>{if(!release){run.paused=true;return false;}value.paused=true;return save(id,user,lease,value,release);};
  await performStep(store,'run','user',async()=>{calls++;});assert.equal(calls,0);assert.equal(run.tasks[0].status,'queued');assert.equal(ledger(run).reserved,0);assert.equal(run.status,'ready');
+});
+test('Direct worker performs no planning and finishes with one response',async()=>{
+ const {store,run}=fixture();run.tasks[0].kind='work';run.tasks[0].task='Write a button';let calls=0;
+ await performStep(store,'run','user',async args=>{calls++;assert.match(args.prompt,/Write a button/);assert.doesNotMatch(args.prompt,/JSON-план/);return {text:'button',complete:true,usage:{input:10,output:20,total:30}};});
+ assert.equal(calls,1);assert.equal(run.tasks.length,1);assert.equal(run.status,'completed');
+});
+test('A paid review preserves the target output and records a failed verdict',async()=>{
+ const {store,run}=fixture();Object.assign(run.tasks[0],{kind:'work',status:'completed',output:'old cart',cost:{state:'settled',micros:10}});run.status='completed';
+ const q=planAction(run,'chef','review');q.id='quote';q.expiresAt=Date.now()+10000;q.reserveMicros=10000;q.input=buildTaskInput(run,q.task);run.actionQuote=q;Object.assign(run,applyAction(run,'quote'));
+ await performStep(store,'run','user',async()=>({text:'{"passed":false,"issues":["missing delete"]}',complete:true,usage:{input:10,output:20,total:30}}));
+ assert.equal(run.tasks[0].output,'old cart');assert.equal(run.tasks[0].review.passed,false);assert.equal(run.status,'completed');assert.ok(ledger(run).spent>10);
+});
+test('A revision only invokes the selected task and spends against its approved cap',async()=>{
+ const {store,run}=fixture();Object.assign(run.tasks[0],{kind:'work',status:'completed',output:'old cart',cost:{state:'settled',micros:10}});run.status='completed';
+ const q=planAction(run,'chef','repair','delete button');q.id='quote';q.expiresAt=Date.now()+10000;q.reserveMicros=1;q.input=buildTaskInput(run,q.task);run.actionQuote=q;Object.assign(run,applyAction(run,'quote'));
+ let calls=0;await performStep(store,'run','user',async()=>{calls++;});assert.equal(calls,0);assert.equal(run.status,'budget');assert.equal(run.tasks[0].attempts[0].output,'old cart');assert.equal(ledger(run).spent,10);
+});
+test('A repaired task can complete despite a failed review of an older version',async()=>{
+ const {store,run}=fixture();Object.assign(run.tasks[0],{kind:'work',revision:1,status:'queued',output:''});
+ run.tasks.push({id:'old-review',kind:'review',targetId:'chef',targetRevision:0,status:'error',output:'bad JSON',error:'Некорректный вердикт',cost:{state:'settled',micros:10}});
+ await performStep(store,'run','user',async()=>({text:'fixed',complete:true,usage:{input:10,output:20,total:30}}));
+ assert.equal(run.status,'completed');assert.ok(ledger(run).spent>10);assert.equal(run.tasks[1].error,'Некорректный вердикт');
 });

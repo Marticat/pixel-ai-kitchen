@@ -14,6 +14,11 @@ assert.equal(normalizeUsage('anthropic',{input_tokens:1}),null);
 assert.equal(normalizeUsage('openai',{input_tokens:-1,output_tokens:1}),null);
 });
 const catalogue=[{provider:'openai',id:'gpt-6-astra'},{provider:'openai',id:'gpt-6-luna'},{provider:'anthropic',id:'claude-sonnet-5-5'},{provider:'anthropic',id:'claude-haiku-5-5'}];
+test('A small request may be answered by the chef without spawning workers',()=>{
+ const plan=validatePlan({title:'Кнопка',result:'button code',tasks:[]},catalogue);
+ assert.equal(plan.result,'button code');assert.deepEqual(plan.tasks,[]);
+ assert.throws(()=>validatePlan({title:'X',result:'',tasks:[]},catalogue));
+});
 test('Routing chooses available models only, with economy and quality preferences',()=>{
 assert.equal(chooseModels(catalogue,'economy').workers.find(x=>x.provider==='openai').id,'gpt-6-luna');
 assert.equal(chooseModels(catalogue,'quality').chief.id,'gpt-6-astra');

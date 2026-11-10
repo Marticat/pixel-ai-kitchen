@@ -1,9 +1,10 @@
 'use client';
 import {useState} from 'react';
 import Chef from './Chef';
-import type {Task} from '@/lib/kitchen-types';
+import type {Task,Run} from '@/lib/kitchen-types';
+import TaskActions from './TaskActions';
 import {fmt,labels,money} from './kitchen-client';
-export default function TaskPanel({task,index,uncertain,message}:{task?:Task;index:number;uncertain?:boolean;message:(text:string)=>void}){
+export default function TaskPanel({task,index,uncertain,message,run,busy,quote,accept}:{task?:Task;index:number;uncertain?:boolean;message:(text:string)=>void;run?:Run;busy:boolean;quote:(id:string,action:string,feedback:string)=>Promise<void>;accept:(id:string)=>Promise<void>}){
  const [panel,setPanel]=useState<'task'|'result'>('task');
  return <aside className="ak-detail" aria-label="Карточка повара">{task?<>
   <div className="ak-detail-top"><span className="ak-eyebrow">ЗА РАБОЧИМ СТОЛОМ</span><span>{String(index+1).padStart(2,'0')}</span></div>
@@ -12,6 +13,11 @@ export default function TaskPanel({task,index,uncertain,message}:{task?:Task;ind
   <div className="live-detail-tabs"><button aria-pressed={panel==='task'} onClick={()=>setPanel('task')}>Задача</button><button aria-pressed={panel==='result'} onClick={()=>setPanel('result')}>Результат</button></div>
   {panel==='task'?<p id="ak-task">{task.task}</p>:<div><pre className="live-result">{task.output||(task.status==='running'?'Модель готовит ответ…':'Ответ ещё не получен.')}</pre>{task.output&&<button className="ak-quiet" onClick={async()=>{try{await navigator.clipboard.writeText(task.output);message('Результат скопирован.');}catch{message('Используй «Скачать проект», если копирование недоступно.');}}}>Скопировать</button>}</div>}
   {task.error&&<p className="live-error">{task.error}</p>}
+  {Boolean(task.attempts?.length)&&<p className="live-small">Все версии этого повара: {money([...(task.attempts||[]),task].reduce((sum,t)=>sum+(t.cost?.state==='settled'?t.cost.micros||0:0),0))} по полученным токенам. Стоимость ниже относится к текущей версии.</p>}
+  {task.feedback&&<p className="live-small">Последнее исправление: {task.feedback}</p>}
+  {task.context&&<details className="live-small"><summary>Что получил повар</summary><p>Само задание{task.kind==='review'?' и проверяемый результат':', выбранные зависимости и предыдущую версию при исправлении'}. Вся история не передаётся.</p>{task.context.sources.map((s,i)=><p key={s.id+'-'+i}>{s.role}: {fmt(s.includedChars)} из {fmt(s.originalChars)} символов{s.trimmed?' · выдержка':''}</p>)}<p>Символы — объём материалов, не число токенов. Токены ниже берутся из API.</p></details>}
+  {Boolean(task.attempts?.length)&&<details className="live-small"><summary>Предыдущие версии ({task.attempts!.length})</summary>{task.attempts!.map((a,i)=><details key={i}><summary>Версия {i+1} · {a.actualModel||a.model} · {a.cost?.state==='settled'?money(a.cost.micros!):'нет данных'}</summary><pre className="live-result">{a.output||a.error||'Нет ответа'}</pre></details>)}</details>}
+  {run&&<TaskActions run={run} task={task} busy={busy} quote={quote} accept={accept}/>}
   <div className="money-chef"><span className="ak-caption">СТОИМОСТЬ ПОВАРА · USD</span><strong>{task.cost?.state==='settled'?money(task.cost.micros!):task.cost?.state==='unknown'?'Неизвестна':task.cost?.state==='reserved'?'Ожидаем ответ':task.startedAt?'Нет данных':'Ещё не потрачено'}</strong>{task.cost&&task.cost.state!=='settled'&&<span>Резерв: {money(task.cost.reservedMicros)}</span>}{task.cost?.state==='settled'&&task.cost.breakdown&&<span>Вход: {money(task.cost.breakdown.input)} · Выход: {money(task.cost.breakdown.output)}</span>}<small>{task.cost?.state==='settled'?'Расчёт по токенам API и сохранённому тарифу.':'Перед вызовом проверим стоимость и остаток бюджета.'}</small></div>
   <div className="ak-divider"/><div className="ak-token-head"><span className="ak-caption">ТОКЕНЫ ПОВАРА</span><span className="ak-sim-tag">{task.usage?'Данные API':'Нет данных API'}</span></div><div className="ak-token-total">{task.usage?fmt(task.usage.total):'—'}</div><div className="ak-token-parts"><div><span>Входящие</span><strong>{task.usage?fmt(task.usage.input):'—'}</strong></div><div><span>Исходящие</span><strong>{task.usage?fmt(task.usage.output):'—'}</strong></div></div>
   {task.usage&&<details className="live-small"><summary>Кэш и рассуждения</summary><p>Из кэша: {fmt(task.usage.cacheRead)} · В кэш: {fmt(task.usage.cacheWrite)}<br/>Рассуждения: {task.usage.reasoning===null?'не выделены API':fmt(task.usage.reasoning)}<br/>Эти значения уже учтены в сумме.</p></details>}
