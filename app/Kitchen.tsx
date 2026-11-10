@@ -28,7 +28,7 @@ export default function Kitchen(){
  async function saveConnections(keys:{openai:string;anthropic:string}){setError('');try{const value=await api<Settings>('settings',keys);setSettings(value);setMessage('Ключи проверены и сохранены в зашифрованном виде.');if(value.openai&&value.anthropic)setShowSettings(false);}catch(e){setError((e as Error).message);throw e;}}
  async function openRun(id:string){auto.current=false;setError('');try{const value=await api('runs/'+id);setRun(value);setPrompt(value.prompt);setMode(value.mode);setMaxOutput(value.maxOutput);setSelected(value.tasks.at(-1)?.id||'chef');}catch(e){setError((e as Error).message);}}
  return <main id="ai-kitchen">
-  <header className="ak-header"><div className="ak-brand"><span className="ak-logo" aria-hidden="true">{'</>'}</span><div><strong>ИИ-КУХНЯ</strong><span>ПОВАРА ПИШУТ КОД. ТЫ ПРИДУМЫВАЕШЬ.</span></div></div><button className="ak-quiet" onClick={()=>setShowSettings(!showSettings)}>Подключения {connected?'●':'○'}</button></header>
+  <header className="ak-header"><div className="ak-brand"><span className="ak-logo" aria-hidden="true">{'</>'}</span><div><strong>ИИ-КУХНЯ</strong><span>ПОВАРА ПИШУТ КОД. ТЫ ПРИДУМЫВАЕШЬ.</span></div></div><a className="ak-quiet demo-link" href="/demo">▶ Смотреть симуляцию</a><button className="ak-quiet" onClick={()=>setShowSettings(!showSettings)}>Подключения {connected?'●':'○'}</button></header>
   {error&&<div role="alert" className="live-alert">{error}{error.includes('Войдите')&&<a href="/signin-with-chatgpt?return_to=/" target="_top">Войти через ChatGPT</a>}</div>}
   {message&&<div className="live-message" role="status">{message}</div>}
   {(showSettings||(!loading&&!connected))&&<Connections settings={settings} loading={loading} refresh={loadSettings} save={saveConnections}/>}
@@ -41,4 +41,5 @@ export default function Kitchen(){
   <footer className="ak-footer"><div><span className="ak-total-dot"/>Вся кухня <strong>{fmt(total)}</strong> подтверждённых токенов{unknown?' · часть расхода неизвестна':''}</div><span>OpenAI + Anthropic · Ключи на сервере</span></footer>
  </main>;
 }
+
 
