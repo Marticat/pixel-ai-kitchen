@@ -1,2 +1,2 @@
-import DemoKitchen from './DemoKitchen';
-export default function DemoPage(){return <DemoKitchen/>;}
+import {redirect} from 'next/navigation';
+export default function RetiredDemoPage(){redirect('/');}
